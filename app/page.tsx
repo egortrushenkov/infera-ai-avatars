@@ -48,7 +48,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-[100dvh] min-h-[100svh] flex-col items-center bg-background">
-      {/* Background subtle grid pattern */}
+      {/* Background  subtle grid pattern */}
       <div
         className="pointer-events-none fixed inset-0 opacity-[0.03]"
         style={{
