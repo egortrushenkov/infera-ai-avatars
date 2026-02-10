@@ -1,25 +1,26 @@
-import {
-  consumeStream,
-  convertToModelMessages,
-  streamText,
-  type UIMessage,
-} from "ai";
+import OpenAI from "openai";
 
-export const maxDuration = 30;
+const client = new OpenAI(
+  {
+    apiKey: process.env.ROUTER_API_KEY,
+    baseURL: "https://routerai.ru/api/v1"
+  }
+);
 
 export async function POST(req: Request) {
-  const { messages }: { messages: UIMessage[] } = await req.json();
+  const body = await req.json();
+  const list = body.messages ?? [];
+  const lastUser = [...list].reverse().find((m: { role?: string }) => m.role === "user");
+  const userText = lastUser?.parts?.[0]?.text ?? "";
+  console.log("body (последнее сообщение пользователя):", userText);
 
-  const result = streamText({
-    model: "openai/gpt-4o-mini",
-    system:
-      "You are a friendly and knowledgeable AI assistant named Инфера. You speak in a calm, thoughtful manner and like to help people. Always respond in Russian. Keep your responses concise but insightful. You can answer questions on any topic.",
-    messages: await convertToModelMessages(messages),
-    abortSignal: req.signal,
+  const response = await client.chat.completions.create({
+    model: "google/gemini-3-pro-preview",
+    messages: [{ role: "user", content: userText }],
   });
 
-  return result.toUIMessageStreamResponse({
-    originalMessages: messages,
-    consumeSseStream: consumeStream,
-  });
+  const answer = response.choices[0]?.message?.content ?? "";
+  console.log("ответ запроса:", answer);
+
+  return new Response(answer);
 }

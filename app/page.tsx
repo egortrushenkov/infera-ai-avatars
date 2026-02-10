@@ -1,49 +1,84 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { useState, useRef, useEffect, useCallback } from "react";
+import type { UIMessage } from "ai";
 import { AIAvatar } from "@/components/ai-avatar";
 import { MessageList, getMessageText } from "@/components/message-list";
 import { ChatInput } from "@/components/chat-input";
 import { SuggestionChips } from "@/components/suggestion-chips";
 import { useSpeech } from "@/hooks/use-speech";
+import { useRouterAudio } from "@/hooks/use-router-audio";
+
+function createMessage(role: "user" | "assistant", text: string): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    parts: [{ type: "text", text }],
+  };
+}
 
 export default function Home() {
   const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<UIMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const lastSpokenIdRef = useRef<string | null>(null);
 
-  const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
-  });
+  const { speak: speakFallback, stop: stopFallback } = useSpeech(true);
+  const { speak: speakRouter, stop: stopRouter, isSpeaking } = useRouterAudio();
 
-  const { speak, stop, isSpeaking } = useSpeech(true);
-  const isLoading = status === "streaming" || status === "submitted";
+  const stop = useCallback(() => {
+    stopRouter();
+    stopFallback();
+  }, [stopRouter, stopFallback]);
 
-  // Озвучить последний ответ ассистента, когда стрим закончится
-  useEffect(() => {
-    if (status !== "streaming" && messages.length > 0) {
-      const last = messages[messages.length - 1];
-      if (last.role === "assistant" && last.id !== lastSpokenIdRef.current) {
-        const text = getMessageText(last);
-        if (text.trim()) {
-          lastSpokenIdRef.current = last.id;
-          speak(text);
+  const sendMessage = useCallback(async (text: string) => {
+    const userMessage = createMessage("user", text);
+    setMessages((prev) => [...prev, userMessage]);
+    setIsLoading(true);
+    stop();
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, userMessage].map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts,
+          })),
+        }),
+      });
+      const answer = await res.text();
+      const assistantMessage = createMessage("assistant", answer || "Нет ответа.");
+      setMessages((prev) => [...prev, assistantMessage]);
+      lastSpokenIdRef.current = assistantMessage.id;
+      if (answer.trim()) {
+        try {
+          await speakRouter(answer);
+        } catch {
+          speakFallback(answer);
         }
       }
+    } catch (e) {
+      console.error(e);
+      setMessages((prev) => [
+        ...prev,
+        createMessage("assistant", "Ошибка при запросе."),
+      ]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [status, messages, speak]);
+  }, [messages, stop, speakRouter, speakFallback]);
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
-    stop();
-    sendMessage({ text: input });
+    sendMessage(input);
     setInput("");
   };
 
   const handleSuggestion = (text: string) => {
-    stop();
-    sendMessage({ text });
+    sendMessage(text);
   };
 
   return (
